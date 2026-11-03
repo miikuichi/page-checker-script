@@ -260,7 +260,7 @@ These apply to every section unless the domain's own page template says otherwis
 *Real feedback from past participants, quoted word for word with the company and course.*
 
 - [ ] Heading (e.g. "What participants tell us") and intro with a link to [Country]'s reviews page (per country)
-- [ ] **3 real reviews**, copied word for word from [Country]'s own reviews page, each with the quote, course attended, company and company logo. No stars and no dates (per country)
+- [ ] **3 real reviews**, copied word for word from [Country]'s own reviews page, each showing only the quote, the company name (in larger text) and the company logo (no border, shown large). No course name, no stars and no dates (per country)
 - [ ] If [Country] has no reviews of its own, use reviews from the KTI Singapore reviews page (knowlesti.sg)
 - [ ] Each logo matches the company in the review, and reviews differ from other template pages where possible
 

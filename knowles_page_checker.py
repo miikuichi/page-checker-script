@@ -98,6 +98,11 @@ def plain(text):
     return clean(re.sub(r'[*`_]', '', text))
 
 
+def required_count(text):
+    """REQUIRED_COUNTS value for a phrase stated as a count ("6 learning outcomes"), not a passing mention."""
+    return next((v for k, v in REQUIRED_COUNTS.items() if re.search(rf'\b\d+\s+{re.escape(k)}\b', text)), None)
+
+
 @dataclass(eq=False)
 class Node:
     tag: str
@@ -262,6 +267,8 @@ class Audit:
             keys = [self.replace(k).lower() for k in keys]
             candidates = self.headings + [n for n in self.content_nodes
                                           if n.tag in {'p', 'span', 'div'} and len(n.text()) < 120]
+            # Titles and text inside a grid of cards name items, not sections.
+            candidates = [n for n in candidates if not self.in_card_grid(n)]
             scored = []
             for n in candidates:
                 text = n.text().lower().strip(' .?!')
@@ -272,6 +279,19 @@ class Audit:
             heading = max(scored, key=lambda v: v[:2])[2] if scored else None
         self.section_matches[section] = heading
         return heading
+
+    def in_card_grid(self, node):
+        """True inside or around a grid of sibling cards (class card or *-card); a lone card can hold a section heading."""
+        def is_card(n):
+            return isinstance(n, Node) and any(re.search(r'(?:^|-)card$', c) for c in n.attrs.get('class', '').split())
+        def grid_card(n):
+            return is_card(n) and n.parent is not None and sum(map(is_card, n.parent.children)) > 1
+        n = node
+        while n is not None and n is not self.content:
+            if grid_card(n):
+                return True
+            n = n.parent
+        return any(map(grid_card, node.walk()))
 
     def replace(self, text):
         for key, value in {'Country': self.country, 'Course': self.subject, 'Topic': self.subject}.items():
@@ -618,7 +638,7 @@ class Audit:
         dates = re.findall(r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b20\d{2}-\d{2}(?:-\d{2})?', scope.text(), re.I)
         problems += ['Review date: ' + d for d in dates]
         return ('fail' if problems else 'review', '; '.join(problems) or
-                f'{len(quotes)} review candidates, {len(scope.find("img"))} logo/image candidates. Verify company names, matching logos, course names and verbatim source.')
+                f'{len(quotes)} review candidates, {len(scope.find("img"))} logo/image candidates. Verify company names, matching logos, no course name shown, and verbatim source.')
 
     def check_count(self, item):
         """Content counts: scope list/card candidates to the matched numbered section."""
@@ -630,7 +650,7 @@ class Audit:
             values = {int(m) for m in re.findall(r'\b(\d+)\s*(?:minutes?|mins?)\b', scope.text(), re.I)}
             return ('review' if values == DURATION_OPTIONS else 'fail' if values else 'review',
                     f'Duration values found: {sorted(values)}; expected {sorted(DURATION_OPTIONS)}. Confirm five distinct options and their descriptions.')
-        required = next((v for k, v in REQUIRED_COUNTS.items() if k in text), None)
+        required = required_count(text)
         match = re.search(r'\b(\d+)\s+(?:numbered )?(?:cards|points|steps|options|elements|benefits|reasons|formats|resources|promises|quick facts|facts|example quotes|proof points)\b', text)
         required = required or (int(match[1]) if match else None)
         if required is None:
@@ -718,7 +738,7 @@ def route(item):
     for pattern, method in ITEM_ROUTES:
         if re.search(pattern, text):
             return method
-    if any(k in text for k in REQUIRED_COUNTS) or re.match(r'\d+ (?:numbered )?(?:cards|points|steps|options|elements|benefits|reasons|formats|resources|promises|quick facts|facts|example quotes|proof points)', text):
+    if required_count(text) is not None or re.match(r'\d+ (?:numbered )?(?:cards|points|steps|options|elements|benefits|reasons|formats|resources|promises|quick facts|facts|example quotes|proof points)', text):
         return 'check_count'
     return None
 
@@ -947,4 +967,8 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    # Windows pipes default to a legacy code page that cannot print the status icons.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8', errors='replace')
     raise SystemExit(main())

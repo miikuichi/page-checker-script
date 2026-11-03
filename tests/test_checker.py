@@ -1,6 +1,7 @@
 import csv
 import contextlib
 import io
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -43,7 +44,7 @@ class CheckerTests(unittest.TestCase):
         for filename in k.CHECKLIST_FILES.values():
             path = ROOT / 'checklists' / filename
             items = k.parse_checklist(path)
-            self.assertEqual(len(items), sum('- [ ] ' in line for line in path.read_text().splitlines()))
+            self.assertEqual(len(items), sum('- [ ] ' in line for line in path.read_text(encoding='utf-8').splitlines()))
             self.assertGreater(len(items), 100)
             self.assertTrue(any(i.optional for i in items))
             self.assertTrue(any('per country' in i.tags for i in items))
@@ -68,6 +69,24 @@ class CheckerTests(unittest.TestCase):
         self.assertEqual(status, 'fail')
         self.assertIn('Duplicate', evidence)
         self.assertIn('2 H1', evidence)
+
+    def test_count_rule_needs_a_number(self):
+        faq = k.Item('23. Frequently asked questions', 'Answers about the main focus, who it suits and learning outcomes are written for the course')
+        outcomes = k.Item('5. What participants will be better able to do', '**6 learning outcomes**, each with an icon')
+        self.assertNotEqual(k.route(faq), 'check_count')
+        self.assertEqual(k.route(outcomes), 'check_count')
+
+    def test_card_grid_text_is_not_a_section(self):
+        cards = ('<section><h2>How Participants Learn</h2><div class="grid">'
+                 '<div class="card"><h3>Learn</h3><p>Short input on the concept and why it matters.</p></div>'
+                 '<div class="card"><h3>Flexible formats</h3><p>Onsite or virtual.</p></div></div></section>')
+        audit = self.audit(html().replace('</main>', cards + '</main>'))
+        self.assertIsNone(audit.section('3. Why it matters in [Country]'))
+        self.assertIsNone(audit.section('16. Choose your training format'))
+        audit = self.audit(html().replace('</main>', cards + '<section><h2>Why it matters in UAE</h2></section>'
+                                          '<div class="card"><h2>Pricing and investment</h2></div></main>'))
+        self.assertEqual(audit.section('3. Why it matters in [Country]').text(), 'Why it matters in UAE')
+        self.assertEqual(audit.section('20. Pricing and investment').text(), 'Pricing and investment')
 
     def test_curriculum_count(self):
         audit = self.audit(html().replace('</main>', '<section><h2>Course curriculum</h2><ol>' + '<li>Module</li>'*9 + '</ol></section></main>'))
@@ -155,13 +174,13 @@ class CheckerTests(unittest.TestCase):
     def test_cli_markdown_csv_and_preservation(self):
         with tempfile.TemporaryDirectory() as tmp:
             source, report, csv_path = [Path(tmp)/p for p in ('draft.html', 'out.md', 'out.csv')]
-            source.write_text(html(faq=12))
+            source.write_text(html(faq=12), encoding='utf-8')
             original = source.read_bytes()
             with contextlib.redirect_stdout(io.StringIO()):
                 code = k.main([str(source), '--no-link-check', '--out', str(report), '--csv'])
             self.assertEqual(code, 1)
             self.assertEqual(source.read_bytes(), original)
-            self.assertIn('Found 12 FAQ', report.read_text())
+            self.assertIn('Found 12 FAQ', report.read_text(encoding='utf-8'))
             with csv_path.open(encoding='utf-8-sig') as stream:
                 rows = list(csv.DictReader(stream))
             items = k.parse_checklist(ROOT/'checklists'/k.CHECKLIST_FILES['course'])
@@ -172,6 +191,16 @@ class CheckerTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(ROOT/'knowles_page_checker.py'), '/no/such/file.html'], capture_output=True, text=True)
         self.assertEqual(result.returncode, 2)
         self.assertNotIn('Traceback', result.stderr)
+
+    def test_cli_summary_on_legacy_code_page(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp)/'draft.html'
+            source.write_text(html(faq=12), encoding='utf-8')
+            result = subprocess.run([sys.executable, str(ROOT/'knowles_page_checker.py'), str(source), '--no-link-check',
+                                     '--out', str(Path(tmp)/'out.md')], capture_output=True,
+                                    env={**os.environ, 'PYTHONIOENCODING': 'cp1252'})
+            self.assertEqual(result.returncode, 1, result.stderr.decode('utf-8', 'replace'))
+            self.assertIn('✅ Pass', result.stdout.decode('utf-8'))
 
     def test_fetch_failure_isolated(self):
         with patch.object(k, 'urlopen', side_effect=TimeoutError('timed out')):
